@@ -18,12 +18,11 @@ pipeline {
     }
 
     environment {
-        // Identifiants Docker Hub stockes dans Jenkins
-        // (Manage Jenkins > Credentials > ID: dockerhub-credentials,
-        // type "Username with password")
-        DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
-        IMAGE_NAME             = "counter-app"
-        IMAGE_TAG              = "${env.BUILD_NUMBER}"
+        // Les identifiants Docker Hub ne sont PAS exposes ici : ils sont
+        // limites a l'etape de push (withCredentials) pour que le code
+        // execute pendant l'installation et les tests n'y ait pas acces.
+        IMAGE_NAME = "counter-app"
+        IMAGE_TAG  = "${env.BUILD_NUMBER}"
     }
 
     stages {
@@ -71,10 +70,7 @@ pipeline {
                 }
             }
             steps {
-                sh """
-                    docker build -t ${DOCKERHUB_CREDENTIALS_USR}/${IMAGE_NAME}:${IMAGE_TAG} \
-                                 -t ${DOCKERHUB_CREDENTIALS_USR}/${IMAGE_NAME}:latest .
-                """
+                sh 'docker build -t "$IMAGE_NAME:$IMAGE_TAG" .'
             }
         }
 
@@ -86,12 +82,23 @@ pipeline {
                 }
             }
             steps {
-                sh """
-                    echo "${DOCKERHUB_CREDENTIALS_PSW}" | docker login -u "${DOCKERHUB_CREDENTIALS_USR}" --password-stdin
-                    docker push ${DOCKERHUB_CREDENTIALS_USR}/${IMAGE_NAME}:${IMAGE_TAG}
-                    docker push ${DOCKERHUB_CREDENTIALS_USR}/${IMAGE_NAME}:latest
-                    docker logout
-                """
+                // Identifiants Jenkins : Manage Jenkins > Credentials >
+                // ID "dockerhub-credentials", type "Username with password".
+                // Simples quotes : le shell (et non Groovy) developpe les
+                // variables, le mot de passe n'apparait donc pas dans le script.
+                withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials',
+                                                  usernameVariable: 'DOCKERHUB_USR',
+                                                  passwordVariable: 'DOCKERHUB_PSW')]) {
+                    sh '''
+                        echo "$DOCKERHUB_PSW" | docker login -u "$DOCKERHUB_USR" --password-stdin
+                        docker tag "$IMAGE_NAME:$IMAGE_TAG" "$DOCKERHUB_USR/$IMAGE_NAME:$IMAGE_TAG"
+                        docker tag "$IMAGE_NAME:$IMAGE_TAG" "$DOCKERHUB_USR/$IMAGE_NAME:latest"
+                        docker push "$DOCKERHUB_USR/$IMAGE_NAME:$IMAGE_TAG"
+                        docker push "$DOCKERHUB_USR/$IMAGE_NAME:latest"
+                        docker logout
+                        docker image rm "$DOCKERHUB_USR/$IMAGE_NAME:$IMAGE_TAG" "$DOCKERHUB_USR/$IMAGE_NAME:latest" || true
+                    '''
+                }
             }
         }
     }
@@ -100,7 +107,7 @@ pipeline {
         always {
             // Nettoyage : supprime les images locales taguees par ce build
             // pour ne pas saturer le disque de l'agent Jenkins
-            sh "docker image rm ${DOCKERHUB_CREDENTIALS_USR}/${IMAGE_NAME}:${IMAGE_TAG} || true"
+            sh 'docker image rm "$IMAGE_NAME:$IMAGE_TAG" || true'
             cleanWs()
         }
         success {
