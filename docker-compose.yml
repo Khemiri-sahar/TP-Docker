@@ -1,0 +1,35 @@
+services:
+  db:
+    image: redis:8-alpine
+    container_name: db-service
+    command: redis-server --appendonly yes
+    networks:
+      - app-network
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: counter-app:1.0
+    depends_on:
+      - db
+    networks:
+      - app-network
+    ports:
+      - "${HOST_PORT:-80}:5000"
+    environment:
+      - REDIS_HOST=db-service
+      - REDIS_PORT=6379
+    restart: unless-stopped
+
+networks:
+  app-network:
+    driver: bridge
+    name: app-network
+
+volumes:
+  redis-data:
+    name: redis-data
